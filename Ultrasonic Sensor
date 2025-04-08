@@ -1,0 +1,48 @@
+#include <HCSR04.h>
+
+//HCSR04 hc(9, 10); //initialisation class HCSR04 (trig pin , echo pin)
+
+#define TRIG_PIN 9
+#define ECHO_PIN 10
+#define LED_PIN 6
+#define MOTOR_PIN 5
+
+const float THRESHOLD_INCHES = 6.0;  // Distance threshold inu7iuu77 inches
+
+void setup() {
+    pinMode(TRIG_PIN, OUTPUT);
+    pinMode(ECHO_PIN, INPUT);
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(MOTOR_PIN, OUTPUT);
+    Serial.begin(9600);  // Start serial communication
+}
+
+float getDistanceInches() {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    long duration = pulseIn(ECHO_PIN, HIGH);
+    float distance = duration * 0.0133 / 2; // Convert time to inches
+
+    return distance;
+}
+
+void loop() {
+    float distance = getDistanceInches();
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.println(" inches");
+
+    if (distance < THRESHOLD_INCHES) {
+        digitalWrite(LED_PIN, LOW);   // Turn OFF LED
+        digitalWrite(MOTOR_PIN, LOW); // Turn OFF Motor
+    } else {
+        digitalWrite(LED_PIN, HIGH);  // Turn ON LED
+        digitalWrite(MOTOR_PIN, HIGH); // Turn ON Motor
+    }
+
+    delay(500); // Wait before next reading
+}
