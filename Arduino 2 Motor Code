@@ -1,0 +1,87 @@
+const int motor1Enable = 9;  // PWM pin for Motor 1 speed (Enable 1 on L293D)
+const int motor1Input1 = 2;  // Direction pin 1 for Motor 1
+const int motor1Input2 = 3;  // Direction pin 2 for Motor 1
+
+const int motor2Enable = 10; // PWM pin for Motor 2 speed (Enable 2 on L293D)
+const int motor2Input1 = 4;  // Direction pin 1 for Motor 2
+const int motor2Input2 = 5;  // Direction pin 2 for Motor 2
+
+// Define potentiometer pin
+const int potPin = A0;       // Potentiometer connected to A0
+
+// Define dead zone range
+const int deadZoneLow = 508;  // Lower bound of dead zone
+const int deadZoneHigh = 516; // Upper bound of dead zone
+
+// Variables
+int potValue = 0;            // Store potentiometer reading
+int motorSpeed = 0;          // Store mapped speed value
+bool isForward = true;       // Track direction
+
+void setup() {
+    // Set motor pins as outputs
+    pinMode(motor1Enable, OUTPUT);
+    pinMode(motor1Input1, OUTPUT);
+    pinMode(motor1Input2, OUTPUT);
+    pinMode(motor2Enable, OUTPUT);
+    pinMode(motor2Input1, OUTPUT);
+    pinMode(motor2Input2, OUTPUT);
+
+    // Set potentiometer pin as input
+    pinMode(potPin, INPUT);
+
+    // Start serial communication for debugging
+    Serial.begin(9600);
+}
+
+void loop() {
+    // Read potentiometer value (0-1023)
+    potValue = analogRead(potPin);
+
+    // Determine direction and speed based on potentiometer value
+    if (potValue >= deadZoneLow && potValue <= deadZoneHigh) {
+        // Within dead zone - stop the motors
+        motorSpeed = 0;
+    }
+    else if (potValue < deadZoneLow) {
+        // Reverse direction (0 to deadZoneLow-1)
+        isForward = false;
+        motorSpeed = map(potValue, 0, deadZoneLow - 1, 255, 0); // Speed increases as potValue approaches 0
+    }
+    else {
+        // Forward direction (deadZoneHigh+1 to 1023)
+        isForward = true;
+        motorSpeed = map(potValue, deadZoneHigh + 1, 1023, 0, 255); // Speed increases as potValue approaches 1023
+    }
+
+    // Set motor direction
+    if (isForward) {
+        // Forward
+        digitalWrite(motor1Input1, HIGH);
+        digitalWrite(motor1Input2, LOW);
+        digitalWrite(motor2Input1, HIGH);
+        digitalWrite(motor2Input2, LOW);
+    }
+    else {
+        // Reverse
+        digitalWrite(motor1Input1, LOW);
+        digitalWrite(motor1Input2, HIGH);
+        digitalWrite(motor2Input1, LOW);
+        digitalWrite(motor2Input2, HIGH);
+    }
+
+    // Apply speed to both motors
+    analogWrite(motor1Enable, motorSpeed);
+    analogWrite(motor2Enable, motorSpeed);
+
+    // Print detailed values to Serial Monitor for debugging
+    Serial.print("Pot Value: ");
+    Serial.print(potValue);
+    Serial.print(" | Motor Speed: ");
+    Serial.print(motorSpeed);
+    Serial.print(" | Direction: ");
+    Serial.println(isForward ? "Forward" : "Reverse");
+
+    // Small delay for stability
+    delay(100);
+}
