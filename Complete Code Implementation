@@ -1,0 +1,246 @@
+const int TRIG_PIN_1 = A1;    // HC-SR04 trigger pin for sensor 1 (analog pin)
+const int ECHO_PIN_1 = 7;     // HC-SR04 echo pin for sensor 1
+const int TRIG_PIN_2 = A2;    // HC-SR04 trigger pin for sensor 2
+const int ECHO_PIN_2 = 8;     // HC-SR04 echo pin for sensor 2
+const int TRIG_PIN_3 = A3;    // HC-SR04 trigger pin for sensor 3
+const int ECHO_PIN_3 = 12;    // HC-SR04 echo pin for sensor 3
+const int LED_RED_PIN = 2;    // RGB LED red pin
+const int LED_GREEN_PIN = 11; // RGB LED green pin
+const int motor1Enable = 9;   // PWM pin for Motor 1 speed (Enable 1 on L293D)
+const int motor1Input1 = 6;   // Direction pin 1 for Motor 1 (L293D Input 1)
+const int motor1Input2 = 3;   // Direction pin 2 for Motor 1 (L293D Input 2)
+const int motor2Enable = 10;  // PWM pin for Motor 2 speed (Enable 2 on L293D)
+const int motor2Input1 = 4;   // Direction pin 1 for Motor 2 (L293D Input 3)
+const int motor2Input2 = 5;   // Direction pin 2 for Motor 2 (L293D Input 4)
+const int potPin = A0;        // Potentiometer pin
+const int BUTTON_PIN = 13;    // Push button pin
+const int BREAK_BEAM_PIN = 1; // Break beam sensor input
+
+const float THRESHOLD_INCHES = 3.0; // Distance threshold in inches
+const float SOUND_SPEED_INCHES_PER_US = 0.0133; // Speed of sound in inches/us
+const float MAX_DISTANCE = 200.0;   // Max valid distance in inches
+const int deadZoneLow = 508;        // Lower bound of dead zone
+const int deadZoneHigh = 516;       // Upper bound of dead zone
+const int numReadings = 5;          // Number of potentiometer readings to average
+
+int potValue = 0;                   // Store averaged potentiometer reading
+int motorSpeed = 0;                 // Store mapped speed value
+bool isForward = true;              // Track motor direction
+int readings[numReadings];          // Array for averaging pot readings
+int readIndex = 0;                  // Index for readings array
+int total = 0;                      // Running total for averaging
+bool isStoppedDueToProximity = false; // Track if stopped due to object < 6 inches
+bool lastButtonState = HIGH;        // Track previous button state (HIGH = unpressed)
+
+void setup() {
+    // Initialize pins
+    pinMode(TRIG_PIN_1, OUTPUT);
+    pinMode(ECHO_PIN_1, INPUT);
+    pinMode(TRIG_PIN_2, OUTPUT);
+    pinMode(ECHO_PIN_2, INPUT);
+    pinMode(TRIG_PIN_3, OUTPUT);
+    pinMode(ECHO_PIN_3, INPUT);
+    pinMode(LED_RED_PIN, OUTPUT);
+    pinMode(LED_GREEN_PIN, OUTPUT);
+    pinMode(motor1Enable, OUTPUT);
+    pinMode(motor1Input1, OUTPUT);
+    pinMode(motor1Input2, OUTPUT);
+    pinMode(motor2Enable, OUTPUT);
+    pinMode(motor2Input1, OUTPUT);
+    pinMode(motor2Input2, OUTPUT);
+    pinMode(potPin, INPUT);
+    pinMode(BUTTON_PIN, INPUT_PULLUP); // Button: HIGH when unpressed, LOW when pressed
+    pinMode(BREAK_BEAM_PIN, INPUT_PULLUP); // Break beam sensor input
+
+    // Initialize potentiometer readings array
+    for (int i = 0; i < numReadings; i++) {
+        readings[i] = 0;
+    }
+
+    // Turn off RGB LED initially
+    digitalWrite(LED_RED_PIN, LOW);
+    digitalWrite(LED_GREEN_PIN, LOW);
+
+    // Ensure motors are stopped initially
+    stopMotors();
+}
+
+float getDistanceInches(int trigPin, int echoPin) {
+    long duration = 0;
+    float distance = 0;
+
+    // Take single reading with timeout
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+
+    duration = pulseIn(echoPin, HIGH, 30000); // Timeout after ~30ms
+
+    // Calculate distance
+    distance = duration * SOUND_SPEED_INCHES_PER_US / 2;
+
+    // Validate reading
+    if (distance <= 0 || distance > MAX_DISTANCE) {
+        return -1; // Invalid reading
+    }
+
+    return distance;
+}
+
+float getMinimumDistance() {
+    float distances[3];
+    distances[0] = getDistanceInches(TRIG_PIN_1, ECHO_PIN_1);
+    distances[1] = getDistanceInches(TRIG_PIN_2, ECHO_PIN_2);
+    distances[2] = getDistanceInches(TRIG_PIN_3, ECHO_PIN_3);
+
+    float minDistance = MAX_DISTANCE + 1;
+    bool validReading = false;
+
+    // Find the minimum valid distance
+    for (int i = 0; i < 3; i++) {
+        if (distances[i] > 0) { // Valid reading
+            if (distances[i] < minDistance) {
+                minDistance = distances[i];
+            }
+            validReading = true;
+        }
+    }
+
+    return validReading ? minDistance : -1;
+}
+
+void stopMotors() {
+    analogWrite(motor1Enable, 0);
+    analogWrite(motor2Enable, 0);
+    digitalWrite(motor1Input1, LOW);
+    digitalWrite(motor1Input2, LOW);
+    digitalWrite(motor2Input1, LOW);
+    digitalWrite(motor2Input2, LOW);
+}
+
+void setRGBLED(bool isSafe, int breakBeamVal) {
+    if (breakBeamVal == 0) {
+        // Break beam is broken: Red ON
+        digitalWrite(LED_RED_PIN, HIGH);
+        digitalWrite(LED_GREEN_PIN, LOW);
+    } else {
+        // Break beam is not broken: Use distance-based logic
+        if (isSafe && !isStoppedDueToProximity) {
+            // Distance >= 6 inches and not stopped: Green ON
+            digitalWrite(LED_RED_PIN, LOW);
+            digitalWrite(LED_GREEN_PIN, HIGH);
+        } else {
+            // Distance < 6 inches or stopped: Red ON
+            digitalWrite(LED_RED_PIN, HIGH);
+            digitalWrite(LED_GREEN_PIN, LOW);
+        }
+    }
+}
+
+void turnOffRGBLED() {
+    // Turn off all colors
+    digitalWrite(LED_RED_PIN, LOW);
+    digitalWrite(LED_GREEN_PIN, LOW);
+}
+
+void loop() {
+    // Read and average potentiometer value
+    total -= readings[readIndex];
+    readings[readIndex] = analogRead(potPin);
+    total += readings[readIndex];
+    readIndex = (readIndex + 1) % numReadings;
+    potValue = total / numReadings;
+
+    // Validate potentiometer reading
+    if (potValue < 0 || potValue > 1023) {
+        stopMotors();
+        turnOffRGBLED();
+        isStoppedDueToProximity = false;
+        return;
+    }
+
+    // Get minimum distance from all ultrasonic sensors
+    float distance = getMinimumDistance();
+
+    // Handle sensor reading
+    if (distance < 0) {
+        stopMotors();
+        turnOffRGBLED();
+        isStoppedDueToProximity = false;
+        return;
+    }
+
+    // Read push button state (LOW = pressed, HIGH = unpressed due to INPUT_PULLUP)
+    bool currentButtonState = digitalRead(BUTTON_PIN);
+    bool isButtonPressed = currentButtonState == LOW;
+
+    // Detect new button press (transition from HIGH to LOW)
+    bool isNewButtonPress = (lastButtonState == HIGH && currentButtonState == LOW);
+
+    // Update last button state
+    lastButtonState = currentButtonState;
+
+    // Break beam sensor logic
+    int breakBeamVal = digitalRead(BREAK_BEAM_PIN);
+
+    // Check proximity and set stopped state
+    if (distance < THRESHOLD_INCHES) {
+        isStoppedDueToProximity = true;
+    }
+
+    // Reset stopped state on new button press
+    if (isNewButtonPress && isStoppedDueToProximity) {
+        isStoppedDueToProximity = false;
+    }
+
+    // Update RGB LED based on break beam and distance
+    setRGBLED(distance >= THRESHOLD_INCHES, breakBeamVal);
+
+    // Control motors
+    if (isButtonPressed) {
+        // Button unpressed: Stop motors
+        stopMotors();
+    } else if (breakBeamVal == 0) {
+        // Break beam is broken: Stop motors
+        stopMotors();
+    } else if (distance < THRESHOLD_INCHES || isStoppedDueToProximity) {
+        // Distance too close or stopped due to prior proximity: Stop motors
+        stopMotors();
+    } else {
+        // Button pressed, break beam not broken, distance safe, not stopped: Run motors
+        if (potValue >= deadZoneLow && potValue <= deadZoneHigh) {
+            motorSpeed = 0; // Stop motors
+        } else if (potValue < deadZoneLow) {
+            isForward = false;
+            motorSpeed = map(potValue, 0, deadZoneLow - 1, 255, 0);
+        } else {
+            isForward = true;
+            motorSpeed = map(potValue, deadZoneHigh + 1, 1023, 0, 255);
+        }
+
+        // Apply motor direction
+        if (isForward) {
+            digitalWrite(motor1Input1, HIGH);
+            digitalWrite(motor1Input2, LOW);
+            digitalWrite(motor2Input1, HIGH);
+            digitalWrite(motor2Input2, LOW);
+        } else {
+            digitalWrite(motor1Input1, LOW);
+            digitalWrite(motor1Input2, HIGH);
+            digitalWrite(motor2Input1, LOW);
+            digitalWrite(motor2Input2, HIGH);
+        }
+
+        // Apply motor speed
+        analogWrite(motor1Enable, motorSpeed);
+        analogWrite(motor2Enable, motorSpeed);
+    }
+
+    // Non-blocking delay
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate >= 50) {
+        lastUpdate = millis();
+    }
+}
